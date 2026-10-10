@@ -109,7 +109,6 @@ function Register() {
     username: "",
     password: "",
     email: "",
-    token: "",
   })
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {

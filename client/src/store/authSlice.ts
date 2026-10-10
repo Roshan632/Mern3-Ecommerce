@@ -10,6 +10,12 @@ interface ILoginUser{
     password : string
 }
 
+interface IRegisterUser {
+    username: string,
+    email: string,
+    password: string
+}
+
 interface IUser{
     username : string | null, 
     email : string | null, 
@@ -112,11 +118,15 @@ const authSlice = createSlice({
 export const {setStatus,setUser,setToken,logout} = authSlice.actions
 export default authSlice.reducer
 
-export function registerUser(data:IUser){
+export function registerUser(data:IRegisterUser){
     return async function registerUserThunk(dispatch:AppDispatch){
         dispatch(setStatus(Status.LOADING))
         try {
-             const response = await API.post("/auth/register",data)
+                 const response = await API.post("/auth/register",{
+                     username: data.username,
+                     email: data.email,
+                     password: data.password,
+                 })
             if(response.status === 201){
                 if(response.data.token){
                     localStorage.setItem("tokenHoYo",response.data.token)
