@@ -43,14 +43,24 @@ class UserController {
       password: bcrypt.hashSync(password, 10),
     })
 
-     await sendMail({
-            to : email, 
-            subject : "Registration successfull on Digital Dokaan", 
-            text : "Welcome to Digital Dokaan, Thank you for registering"
-        })
+    let emailSent = true
+    try {
+      await sendMail({
+        to: email,
+        subject: "Registration successful on Digital Dokaan",
+        text: "Welcome to Digital Dokaan, thank you for registering",
+      })
+    } catch (error) {
+      // Mail delivery is optional; a mail provider failure must not undo account creation.
+      emailSent = false
+      console.error("Registration succeeded, but the welcome email could not be sent:", error)
+    }
 
     res.status(201).json({
-      message: "User registered successfully"
+      message: emailSent
+        ? "User registered successfully"
+        : "Account created successfully, but the welcome email could not be sent.",
+      emailSent,
     })
   }
 
