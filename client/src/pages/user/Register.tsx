@@ -132,7 +132,7 @@ function Register() {
 
   useEffect(() => {
     if (status === Status.SUCCESS) {
-      navigate("/login")
+      navigate("/")
     }
   }, [status, navigate])
 
