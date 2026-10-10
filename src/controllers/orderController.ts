@@ -9,6 +9,7 @@ import { promises } from "node:dns";
 import Cart from "../database/models/cartModel";
 import Product from "../database/models/productModel";
 import Category from "../database/models/categoryModel";
+import crypto from "node:crypto";
 
 interface IProduct{
     productId : string,
@@ -26,6 +27,13 @@ class OrderWithPaymentId extends Order{
 }
 
 class OrderController{
+    private static asString(value:unknown):string{
+      if(Array.isArray(value)){
+        return String(value[0] || "")
+      }
+      return typeof value === "string" ? value : ""
+    }
+
     static async createOrder(req:OrderRequest,res:Response):Promise<void>{
         const userId =  req.user?.id
         const {phoneNumber,addressLine,city,state,firstName,lastName,email,zipCode,totalAmount,paymentMethod} = req.body 
@@ -121,6 +129,37 @@ class OrderController{
                 }
       }else if (paymentMethod == PaymentMethod.Esewa){
         // esewa logic
+        const transactionUuid = orderData.id
+        const productCode = "EPAYTEST"
+        const totalAmountValue = Number(totalAmount)
+        const signedFieldNames = "total_amount,transaction_uuid,product_code"
+        const signature = crypto
+          .createHmac("sha256", "8gBm/:\&EnhH.1/q")
+          .update(`total_amount=${totalAmountValue},transaction_uuid=${transactionUuid},product_code=${productCode}`)
+          .digest("base64")
+
+        paymentData.pidx = transactionUuid
+        await paymentData.save()
+
+        res.status(200).json({
+          message: "eSewa payment initiated and Order Created successfully!!!",
+          url: `${req.protocol}://${req.get("host")}/api/order/esewa/checkout/${transactionUuid}`,
+          esewaUrl: "https://rc-epay.esewa.com.np/api/epay/main/v2/form",
+          formData: {
+            amount: totalAmountValue.toString(),
+            tax_amount: "0",
+            total_amount: totalAmountValue.toString(),
+            transaction_uuid: transactionUuid,
+            product_code: productCode,
+            product_service_charge: "0",
+            product_delivery_charge: "0",
+            success_url: `${req.protocol}://${req.get("host")}/api/order/esewa/success`,
+            failure_url: `${req.protocol}://${req.get("host")}/api/order/esewa/failure`,
+            signed_field_names: signedFieldNames,
+            signature
+          }
+        })
+        return
 
       }else{
         res.status(200).json({
@@ -135,16 +174,160 @@ class OrderController{
       
             
     }
+
+    static async redirectToEsewa(req:Request,res:Response):Promise<void>{
+      const transactionUuid = OrderController.asString(req.params.transactionUuid)
+      const payment = await Payment.findOne({
+        where: { pidx: transactionUuid, paymentMethod: PaymentMethod.Esewa }
+      })
+      if(!payment){
+        res.status(404).send("eSewa payment transaction not found")
+        return
+      }
+
+      const order = await Order.findOne({ where: { paymentId: payment.id } })
+      if(!order){
+        res.status(404).send("Order for eSewa payment not found")
+        return
+      }
+
+      const totalAmountValue = Number(order.totalAmount)
+      const fields:Record<string,string> = {
+        amount: totalAmountValue.toString(),
+        tax_amount: "0",
+        total_amount: totalAmountValue.toString(),
+        transaction_uuid: transactionUuid,
+        product_code: "EPAYTEST",
+        product_service_charge: "0",
+        product_delivery_charge: "0",
+        success_url: `${req.protocol}://${req.get("host")}/api/order/esewa/success`,
+        failure_url: `${req.protocol}://${req.get("host")}/api/order/esewa/failure`,
+        signed_field_names: "total_amount,transaction_uuid,product_code",
+        signature: crypto
+          .createHmac("sha256", "8gBm/:\&EnhH.1/q")
+          .update(`total_amount=${totalAmountValue},transaction_uuid=${transactionUuid},product_code=EPAYTEST`)
+          .digest("base64")
+      }
+      const inputs = Object.entries(fields)
+        .map(([name,value]) => `<input type="hidden" name="${name}" value="${value.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">`)
+        .join("")
+
+      res.type("html").send(`<!doctype html><html><body><form id="esewa" method="POST" action="https://rc-epay.esewa.com.np/api/epay/main/v2/form">${inputs}</form><script>document.getElementById("esewa").submit()</script></body></html>`)
+    }
+
+    static async handleEsewaSuccess(req:Request,res:Response):Promise<void>{
+      const encodedData = req.query.data || req.body?.data
+      let decodedData:Record<string,unknown> = {}
+      if(encodedData){
+        try{
+          decodedData = JSON.parse(Buffer.from(String(encodedData), "base64").toString("utf8"))
+        }catch(error){
+          console.error("Unable to decode eSewa callback data:", error)
+        }
+      }
+      const callbackData = { ...req.query, ...(req.body || {}), ...decodedData }
+      const transactionUuid = OrderController.asString(callbackData.transaction_uuid || callbackData.oid)
+      const order = transactionUuid ? await Order.findByPk(transactionUuid) : null
+      const payment = order?.paymentId
+        ? await Payment.findByPk(order.paymentId)
+        : await Payment.findOne({
+            where: { pidx: transactionUuid, paymentMethod: PaymentMethod.Esewa }
+          })
+      if(!payment){
+        OrderController.renderPaymentPage(res, false, "Payment transaction not found")
+        return
+      }
+
+      if(payment.paymentMethod !== PaymentMethod.Esewa || !order){
+        OrderController.renderPaymentPage(res, false, "Order for payment transaction not found")
+        return
+      }
+
+      try{
+        const response = await axios.get("https://rc-epay.esewa.com.np/api/epay/transaction/status/", {
+          params: {
+            product_code: "EPAYTEST",
+            total_amount: Number(order.totalAmount),
+            transaction_uuid: transactionUuid
+          }
+        })
+        if(response.data.status !== "COMPLETE"){
+          OrderController.renderPaymentPage(res, false, "eSewa could not verify this payment")
+          return
+        }
+        payment.paymentStatus = PaymentStatus.Paid
+        await payment.save()
+        res.redirect(`${process.env.CLIENT_URL || "http://localhost:5173"}/`)
+      }catch(error){
+        console.error("eSewa callback verification error:", error)
+        OrderController.renderPaymentPage(res, false, "Payment verification failed")
+      }
+    }
+
+    static handleEsewaFailure(req:Request,res:Response):void{
+      OrderController.renderPaymentPage(res, false, "Payment was cancelled or could not be completed")
+    }
+
+    private static renderPaymentPage(res:Response, success:boolean, message:string, orderId?:string, transactionUuid?:string):void{
+      const title = success ? "Order confirmed" : "Payment not completed"
+      const details = success
+        ? `<p class="muted">Order ID</p><strong>${orderId}</strong><p class="muted">eSewa transaction</p><strong>${transactionUuid}</strong>`
+        : "<p>Go back to your cart and try again with another payment method.</p>"
+      res.type("html").send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;background:#f4f7f6;color:#173b35;font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh}.card{background:#fff;max-width:460px;width:calc(100% - 40px);padding:42px;border-radius:16px;box-shadow:0 16px 45px #173b3520}h1{margin:0 0 12px;font-size:30px}.mark{font-size:46px;margin-bottom:18px;color:${success ? "#16805c" : "#bc5a3d"}}p{line-height:1.6}.muted{margin:22px 0 4px;color:#68807a;font-size:12px;text-transform:uppercase;letter-spacing:1px}strong{word-break:break-word}a{display:inline-block;margin-top:28px;background:#173b35;color:#fff;padding:13px 20px;border-radius:8px;text-decoration:none}</style></head><body><main class="card"><div class="mark">${success ? "&#10003;" : "!"}</div><h1>${title}</h1><p>${message}</p>${details}<a href="/">Continue shopping</a></main></body></html>`)
+    }
+
    static async verifyTransaction(req:OrderRequest,res:Response):Promise<void>{
-        const {pidx}= req.body
-        if(!pidx){
+      const {pidx, transactionUuid}= req.body
+      const paymentIdentifier = OrderController.asString(pidx || transactionUuid)
+      if(!paymentIdentifier){
             res.status(400).json({
-                message:"Please provide pidx"
+          message:"Please provide pidx or transactionUuid"
             })
             return
         }
+      const payment = await Payment.findOne({
+        where: { pidx: paymentIdentifier }
+      })
+      if(!payment){
+        res.status(404).json({
+          message:"Payment transaction not found"
+        })
+        return
+      }
+      const order = await Order.findOne({
+        where: { paymentId: payment.id }
+      })
+      if(!order){
+        res.status(404).json({
+          message:"Order for payment transaction not found"
+        })
+        return
+      }
+
+      if(payment.paymentMethod === PaymentMethod.Esewa){
+        const response = await axios.get("https://rc-epay.esewa.com.np/api/epay/transaction/status/", {
+          params: {
+            product_code: "EPAYTEST",
+            total_amount: Number(order.totalAmount),
+            transaction_uuid: paymentIdentifier
+          }
+        })
+        const data = response.data
+        if(data.status === "COMPLETE"){
+          payment.paymentStatus = PaymentStatus.Paid
+          await payment.save()
+          res.status(200).json({
+            message:"eSewa payment verified successfully!!!"
+          })
+        }else{
+          res.status(200).json({
+            message:"eSewa payment not verified or cancelled"
+          })
+        }
+        return
+      }
         const response=await axios.post("https://dev.khalti.com/api/v2/epayment/lookup/",{
-            pidx : pidx
+        pidx : paymentIdentifier
         },{
             headers : {
                 Authorization: "Key 937f47f08a504d26bc548980bfc2db0f"
@@ -154,9 +337,9 @@ class OrderController{
         console.log(response)
         const data = response.data
         if(data.status === "Completed"){
-            await Payment.update({PaymentStatus:PaymentStatus.Paid},{
+            await Payment.update({paymentStatus:PaymentStatus.Paid},{
                 where :{
-                    pidx:pidx
+                pidx:paymentIdentifier
                 }
             })
             res.status(200).json({
@@ -296,20 +479,51 @@ class OrderController{
       })
     }
     static async changeOrderStatus(req:OrderRequest,res:Response) : Promise<void>{
-      const orderId = req.params.id 
-      const {orderStatus} = req.body
-      if(!orderId || !orderStatus){
+      const rawOrderId = req.params.id
+      const orderId = Array.isArray(rawOrderId) ? rawOrderId[0] : rawOrderId
+      const {orderStatus, paymentStatus} = req.body
+      if(!orderId || (!orderStatus && !paymentStatus)){
         res.status(400).json({
-          message : "Please provide orderId and orderStatus"
+          message : "Provide an order status or payment status to update"
         })
+        return
       }
-      await Order.update({orderStatus : orderStatus},{
-        where : {
-          id : orderId
-        }
-      })
+
+      if (orderStatus && !Object.values(OrderStatus).includes(orderStatus)) {
+        res.status(400).json({ message: "Invalid order status" })
+        return
+      }
+      if (paymentStatus && !Object.values(PaymentStatus).includes(paymentStatus)) {
+        res.status(400).json({ message: "Invalid payment status" })
+        return
+      }
+
+      const order = await Order.findByPk(orderId)
+      if (!order) {
+        res.status(404).json({ message: "Order not found" })
+        return
+      }
+
+      const payment = order.paymentId ? await Payment.findByPk(order.paymentId) : null
+      if (paymentStatus && !payment) {
+        res.status(404).json({ message: "Payment record not found for this order" })
+        return
+      }
+
+      if (orderStatus) await order.update({ orderStatus })
+      if (paymentStatus && payment) await payment.update({ paymentStatus })
+
       res.status(200).json({
-        message : "Order status updated successfully"
+        message : "Order updated successfully",
+        data: {
+          id: order.id,
+          orderStatus: order.orderStatus,
+          totalAmount: order.totalAmount,
+          Payment: payment ? {
+            paymentMethod: payment.paymentMethod,
+            paymentStatus: payment.paymentStatus,
+          } : null,
+        },
       })
     }
     static async deleteOrder(req:OrderRequest, res:Response) : Promise<void>{

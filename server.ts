@@ -19,10 +19,14 @@ const server = app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
   adminSeeder()  // Admin seeding function is called here to ensure that the admin user is created when the server starts. This way, we can guarantee that the admin user exists in the database before any requests are made to the server.
 });
-const io = new Server(server,{
-  cors :{
-    origin : "http://localhost:5173"  //yeslai matra websocket socket.io server sanga communicate garna dine
-  }
+const socketOrigins = (process.env.CLIENT_URL ?? 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+const io = new Server(server, {
+  cors: {
+    origin: socketOrigins,
+  },
 })
 
 let onlineUsers :{socketId:string,userId:string,role:string}[]=[]

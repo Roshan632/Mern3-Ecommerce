@@ -9,6 +9,9 @@ router.route("/").post(userMiddleware.isUserLoggedIn, errorHandler(orderControll
 .get(userMiddleware.isUserLoggedIn,errorHandler(orderController.fetchMyOrders))
 
 router.route("/all").get(userMiddleware.isUserLoggedIn,userMiddleware.accessTo(Role.Admin), errorHandler(orderController.fetchAllOrders))
+router.route("/esewa/checkout/:transactionUuid").get(errorHandler(orderController.redirectToEsewa))
+router.route("/esewa/success").get(errorHandler(orderController.handleEsewaSuccess)).post(errorHandler(orderController.handleEsewaSuccess))
+router.route("/esewa/failure").get(orderController.handleEsewaFailure)
 router.route("/verify-pidx").post(userMiddleware.isUserLoggedIn,errorHandler(orderController.verifyTransaction))
 
 router.route("/admin/change-status/:id").patch(userMiddleware.isUserLoggedIn,userMiddleware.accessTo(Role.Admin), errorHandler(orderController.changeOrderStatus))

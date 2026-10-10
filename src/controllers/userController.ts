@@ -9,6 +9,9 @@ import findData from "../services/findData";
 import sendResponse from "../services/sendResponse";
 import checkOtpExpiration from "../services/checkOtpExpiration";
 
+interface AuthenticatedRequest extends Request {
+  user?: User
+}
 
 class UserController {
   static async register (req: Request, res: Response) {
@@ -99,6 +102,23 @@ class UserController {
        
       }
     }
+  }
+
+  static async getCurrentUser(req: AuthenticatedRequest, res: Response) {
+    const user = req.user
+    if (!user) {
+      res.status(401).json({ message: "Authentication required" })
+      return
+    }
+
+    res.status(200).json({
+      data: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      },
+    })
   }
 
 

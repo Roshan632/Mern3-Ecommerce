@@ -16,13 +16,25 @@ import productRoute from './routes/productRoute'
 import OrderRoute from './routes/orderRoute'
 import CartRoute from './routes/cartRoute'
 import cors from 'cors'
+import path from 'node:path'
 
 
 
 
 const app = express()
+const allowedOrigins = (process.env.CLIENT_URL ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+
 app.use(cors({
-    origin : "*"
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true)
+            return
+        }
+        callback(new Error('Origin is not allowed by CORS'))
+    },
 }))
 
 app.use(express.json())
@@ -34,7 +46,8 @@ app.use("/api/product",productRoute)
 app.use("/api/order",OrderRoute)
 app.use("/api/cart",CartRoute)
 
-app.use(express.static('./src/uploads'))
+app.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }))
+app.use(express.static(path.resolve(process.cwd(), 'src/uploads')))
 // const schedule = require('node-schedule');
 
 // const job = schedule.scheduleJob('42 * * * *', function(){

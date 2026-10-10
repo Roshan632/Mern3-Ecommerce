@@ -63,6 +63,12 @@ class Order extends Model{
     declare totalAmount : number
 
     @Column({
+        type : DataType.UUID,
+        allowNull : true
+    })
+    declare paymentId : string | null
+
+    @Column({
         type : DataType.ENUM(OrderStatus.Cancelled,
             OrderStatus.Delivered,
             OrderStatus.Ontheway,
