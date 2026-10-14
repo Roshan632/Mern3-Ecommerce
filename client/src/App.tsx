@@ -25,9 +25,10 @@ import AdminRoute from './pages/admin/AdminRoute'
 import { io } from 'socket.io-client'
 import { ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
-import Footer from './globals/components/Footer'
+// import Footer from './globals/components/Footer'
 import About from "./pages/About/About"
 import { getBackendBaseUrl } from './http'
+import  PublicLayout from './globals/components/PublicLayout.tsx'
 
 const socketBaseUrl = (import.meta.env.VITE_SOCKET_URL as string | undefined)?.replace(/\/$/, '') ?? getBackendBaseUrl()
 
@@ -48,10 +49,12 @@ function App() {
 
      <BrowserRouter>
      <ToastContainer position="top-right" autoClose={4000} />
+
      <Routes>
+      <Route element={<PublicLayout/>}>
       <Route path='/' element={<Home/>}/>
       <Route path='/about' element={<About/>}/>
-      <Route path='/register' element={<Register/>}/>
+       <Route path='/register' element={<Register/>}/>
        <Route path='/login' element={<Login />}/>
        <Route path='/products' element={<Product/>}/>
        <Route path='/products/:id' element={<SingleProduct/>}/>
@@ -59,7 +62,10 @@ function App() {
         <Route path="/my-cart" element={<MyCart />} />
         <Route path="/my-checkout" element={<Checkout />} />
         <Route path="/my-orders" element={<MyOrder />} />
-    <Route path="/my-orders/:id" element={<MyOrderDetail />} />
+        <Route path="/my-orders/:id" element={<MyOrderDetail />} />
+    </Route>
+    {/* </BrowserRouter> */}
+
       <Route element={<AdminRoute><Outlet /></AdminRoute>}>
         <Route path='/admin' element={<AdminStats />} />
         <Route path='/admin/categories' element={<Categories />} />
@@ -70,9 +76,10 @@ function App() {
         <Route path='/admin/orders/:id' element={<AdminOrderDetail />} />
       </Route>
      </Routes>
-     
+
+
      </BrowserRouter>
-    <Footer />
+
 
     </Provider>
     </>
